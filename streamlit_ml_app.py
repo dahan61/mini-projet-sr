@@ -1,55 +1,64 @@
-import streamlit as st
-from sklearn.datasets import make_classification, make_regression
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.metrics import accuracy_score, r2_score
 import pandas as pd
-import matplotlib.pyplot as plt
+import numpy as np
+import streamlit as st
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
 
-# App title
-st.title("ML Demo: Classification & Regression")
+# Load the reshaped data
+combined_features = pd.read_csv('final_processed_reviews_data.csv')
 
-# Choose model type
-model_type = st.selectbox("Choose model type:", ["Classification", "Regression"])
+# Step 1: Aggregate Ratings for Each Restaurant (item_id)
+rating_columns = [
+    'atmosphere',
+    'food',
+    'location_rating',
+    'rooms',
+    'service_rating'
+]
 
-# Generate data
-if model_type == "Classification":
-    X, y = make_classification(n_samples=200, n_features=5, n_classes=2, random_state=42)
-else:
-    X, y = make_regression(n_samples=200, n_features=5, noise=10.0, random_state=42)
+# Aggregate (calculate mean) ratings for each restaurant (item_id)
+aggregated_ratings = combined_features.groupby('item_id')[rating_columns].mean()
 
-# Convert to DataFrame for display
-df = pd.DataFrame(X, columns=[f"Feature {i+1}" for i in range(X.shape[1])])
-df["Target"] = y
-st.subheader("Sample Data")
-st.dataframe(df.head())
+# Step 2: Normalize the ratings (standardize them)
+scaler = StandardScaler()
+aggregated_ratings_scaled = scaler.fit_transform(aggregated_ratings)
 
-# Train/test split
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Step 3: Compute Cosine Similarity Between Restaurants
+cosine_sim = cosine_similarity(aggregated_ratings_scaled)
 
-# Train model
-if model_type == "Classification":
-    model = LogisticRegression()
-else:
-    model = LinearRegression()
+# Step 4: Recommend Similar Restaurants
+def recommend_restaurants(restaurant_id, cosine_sim, top_n=5):
+    # Get the index of the restaurant
+    idx = aggregated_ratings.index.get_loc(restaurant_id)
+    
+    # Get the pairwise similarity scores for the given restaurant
+    sim_scores = list(enumerate(cosine_sim[idx]))
+    
+    # Sort the restaurants based on similarity scores (highest first)
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+    
+    # Get the top N most similar restaurants (excluding the restaurant itself)
+    sim_scores = sim_scores[1:top_n+1]
+    
+    # Get the indices of the most similar restaurants
+    restaurant_indices = [i[0] for i in sim_scores]
+    
+    # Return the top N most similar restaurants
+    recommended_restaurants = aggregated_ratings.iloc[restaurant_indices]
+    return recommended_restaurants[['atmosphere', 'food', 'location_rating', 'rooms', 'service_rating']]
 
-model.fit(X_train, y_train)
-y_pred = model.predict(X_test)
+# Streamlit app UI
+st.title("Restaurant Recommendation System")
+st.write("This system recommends similar restaurants based on ratings in various categories.")
 
-# Show results
-st.subheader("Results")
-if model_type == "Classification":
-    score = accuracy_score(y_test, y_pred.round())
-    st.write(f"Accuracy: **{score:.2f}**")
-else:
-    score = r2_score(y_test, y_pred)
-    st.write(f"R² Score: **{score:.2f}**")
+# Input for restaurant item_id
+restaurant_id = st.text_input("Enter the restaurant name or ID:", "مقهى غيث Gaith coffee")
 
-# Plot true vs predicted (regression only)
-if model_type == "Regression":
-    fig, ax = plt.subplots()
-    ax.scatter(y_test, y_pred, alpha=0.7)
-    ax.set_xlabel("True Values")
-    ax.set_ylabel("Predicted Values")
-    ax.set_title("True vs Predicted")
-    st.pyplot(fig)
+# Display recommendations
+if restaurant_id:
+    try:
+        recommended_restaurants = recommend_restaurants(restaurant_id, cosine_sim, top_n=5)
+        st.write(f"Recommended restaurants based on {restaurant_id}:")
+        st.dataframe(recommended_restaurants)
+    except Exception as e:
+        st.error(f"Error: {str(e)}")
